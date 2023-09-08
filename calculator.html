@@ -1,0 +1,339 @@
+<html>
+<head>
+<title>Elliptic curve calculator</title>
+<meta charset=utf-8 />
+<meta http-equiv=“Pragma” content=”no-cache”>
+<meta http-equiv=“Expires” content=”-1″>
+<meta http-equiv=“CACHE-CONTROL” content=”NO-CACHE”>
+
+<meta name="keywords" content="bitcoin,ecdsa,example,calculations,math">
+<meta name="author" content="Willem Hengeveld, itsme@xs4all.nl">
+<meta name="description" content="Elliptic curve calculator.">
+<style>
+    h2 { background-color: lightgreen; }
+</style>
+<script src="bignum.js"></script>
+<script src="gfp.js"></script>
+<script src="ec.js"></script>
+<script src="ecdsa.js"></script>
+<script src="utils.js"></script>
+<script src="jsutils.js"></script>
+<script src="bccurve.js"></script>
+<script src="expression.js"></script>
+<script language=javascript>
+'use strict';
+
+var B = secp256k1();
+function setvalue(base, id, value)
+{
+    var av = base.querySelector("#"+id); 
+    av.value = value;
+    av.innerHTML = value;
+}
+function getnumber(base, id)
+{
+    var av = base.querySelector("#"+id); 
+    if (!av)
+        throw "invalid selector";
+    var val = av.value;
+    if (!val)
+        return B.scalar(BigInt(0));
+    if (!val.startsWith("0x"))
+        val = "0x" + val;
+    return B.scalar(BigInt(val));
+}
+
+class ECContext {
+    constructor()
+    {
+        this.constants = { G: B.G, n: B.ec.order.p, p: B.ec.field.p };
+
+        // the current variables
+        this.d = {};
+    }
+
+    // functions evaluating the various operators
+    add(a, b) {
+        if ((a instanceof Point && b instanceof Point)
+            || (a instanceof Value && b instanceof Value))
+            return a.add(b);
+        throw "You can only add points to points, or scalars to scalars";
+    }
+    sub(a, b) {
+        if ((a instanceof Point && b instanceof Point)
+            || (a instanceof Value && b instanceof Value))
+            return a.sub(b);
+        throw "You can only subtract points from points, or scalars from scalars";
+    }
+    mul(a, b) {
+        if (a instanceof Point && b instanceof Point)
+            throw "points cannot be multiplied together";
+        // 'scalar * point'  is the same as 'point * scalar'
+        if (b instanceof Point)
+            return b.mul(a);
+
+        // handles both 'scalar * scalar', and  'point * scalar'
+        return a.mul(b);
+    }
+    div(a, b) {
+        if (b instanceof Point)
+            throw "You cannot divide by a point";
+        return a.div(B.scalar(b));
+    }
+    pow(a, b) {
+        if (a instanceof Point || b instanceof Point)
+            throw "You cannot exponentiate Points";
+        // todo: make sure  2^(-1)  translates to 1/2
+        // todo: make sure  2^(1/2)  translates to sqrt(2)
+        return a.pow(b);
+    }
+
+    // the builtin functions
+    sqrt(a, flag) {
+        // todo: sometimes this results in a negative number.
+        return a.sqrt(Number(numval(flag)));
+    }
+    cubert(a, flag) { return a.cubert(Number(numval(flag))); }
+    coord(a) { return B.ec.coord(a); }
+    fromx(x, flag) { return B.ec.decompress(B.ec.coord(x), Number(numval(flag))); }
+    fromy(y, flag) { return B.ec.ydecompress(B.ec.coord(y), Number(numval(flag))); }
+    generate(start, n, expr) {
+        if (!["inc", "dbl"].includes(expr))
+            throw "generate must have either \"inc\", or \"dbl\" as its third argument.";
+
+        // generate start, start+G, start+2*G, ...
+        // todo: make it possible to pass expressions as a lambda.
+        n = numval(n);
+        var P = start;
+        var r = [];
+        for (var i=0 ; i < n ; i++) {
+            r.push(P);
+            if (expr==="inc")
+                P = P.add(B.G);
+            else if (expr==="dbl")
+                P = P.add(P);
+        }
+        return r;
+    }
+
+    // function for evaluating a number
+    numbervalue(a) { return B.scalar(BigInt(a)); }
+    // function for evaluating a string
+    textvalue(a) { return a; }
+    // function for evaluating a list
+    listvalue(t, a) {
+        // "(x, y)"  evaulates to a curve point
+        if (a.length==2 && t=="()")
+            return B.ec.point(a[0], a[1]);
+        throw "value not supported";
+    }
+    get(name) {
+        if (name in this.constants)
+            return this.constants[name];
+        var parts = name.split(".");
+        if (parts.length==2)
+            return this.getfrompage(parts[0], parts[1]);
+
+        if (!(name in this.d))
+            this.d[name] = 0;
+        return this.d[name];
+    }
+    getfrompage(tabname, itemname)
+    {
+        var tab = document.getElementById(tabname);
+        return getnumber(tab, itemname);
+    }
+
+    // variable assignment
+    set(name, value)
+    {
+        if (name in this.constants) {
+            console.log("cannot change constant");
+            return;
+        }
+        var parts = name.split(".");
+        if (parts.length==2)
+            return this.setinpage(parts[0], parts[1], value);
+
+        this.d[name] = value;
+    }
+    setinpage(tabname, itemname, value)
+    {
+        var tab = document.getElementById(tabname);
+        var txt = null;
+        if (value instanceof Point)
+            txt = value.toString();
+        else if (value instanceof Value)
+            txt = value.toString();
+        else if (value)
+            console.log("unhandled: " ,value);
+
+        if (txt)
+            setvalue(tab, itemname, txt);
+    }
+    // TODO: change naming convention for points, so I can refer to a point like 'divpt.p1' 
+    //  which will then implicitly refer to (divpt.p1.x, divpt.p1.y)
+};
+var CTX = new ECContext();
+function load_freeform()
+{
+    var tab = document.getElementById("freeform");
+    setvalue(tab, "expr", [
+        "fromx(coord(0)-coord(3),0)",
+        "P=fromx(6,1)+fromx(2,0)",
+        "P/2",
+        "1/5"].join("\n"));
+}
+
+function makerow(k, v)
+{
+    var tr = el('tr');
+    tr.append(el('td', k));
+    tr.append(el('td', v));
+    return tr;
+}
+function eval_expr(expr)
+{
+    var e;
+    try {
+        e = parseexpr(expr);
+        console.log(e.toString());
+    }
+    catch(err) {
+        return "Error parsing expression: "+err.toString();
+    }
+
+    var r;
+    try {
+        r = evaluator(e, CTX);
+    }
+    catch(err) {
+        return "Error evaluating expression: "+err.toString();
+    }
+
+    var txt = null;
+    if (r instanceof Point)
+        txt = r.toString();
+    else if (r instanceof Value)
+        txt = r.toString();
+    else if (r instanceof Array) {
+        var res = "";
+        r.forEach( v => res += v.toString() + "\n" );
+        txt = res;
+    }
+    else if (r)
+        console.log(r);
+
+    return txt;
+}
+function make_url_for_expr(expr)
+{
+    var baseurl = window.location.protocol + "//" + window.location.host + "/" + window.location.pathname;
+    return baseurl + "#" + btoa(expr);
+}
+function do_freeform()
+{
+    var tab = document.getElementById("freeform");
+    var expr = tab.querySelector("#expr").value;
+    var href = tab.querySelector("#href");
+    href.href = make_url_for_expr(expr);
+
+    var results = [];
+    for (var e of expr.split("\n")) {
+        let r = eval_expr(e);
+        if (r)
+            results.push(r);
+    }
+
+    var otab = document.getElementById("output");
+    var bodies = [];
+    if (results) {
+        var tbody = el('tbody');
+        tbody.append(el('tr', el('td', el('hr'))));
+        results.forEach( txt => tbody.append(makerow("result:", txt)));
+        bodies.push(tbody);
+    }
+
+    var tbody = el('tbody');
+    Object.entries(CTX.d).forEach(([k,v])=>{tbody.append(makerow(k, v.toString())); });
+    bodies.push(tbody);
+
+    otab.replaceChildren(...bodies);
+}
+function start()
+{
+    var tab = document.getElementById("freeform");
+    var expr = tab.querySelector("#expr");
+    var h = window.location.hash;
+    if (h.startsWith("#"))
+        h = h.slice(1);
+    expr.value = atob(h);
+}
+</script>
+    </head>
+    <body onLoad="start()">
+Menu:
+  <a href="ecdsacrack.html">crack demo</a> 
+  <a href="calculator.html">curve calculator</a> 
+  <a href="curve.html">curve demo</a> 
+  <a href="transaction.html">bitcoin transaction</a> 
+  <a href="unittest.html">unittest</a><br>
+Author: Willem Hengeveld, <a href="mailto:itsme@xs4all.nl">itsme@xs4all.nl</a>,
+Source: <a href="https://github.com/nlitsme/bitcoinexplainer">on github</a>.
+<p>
+Enter any kind of expression to do elliptic curve calculations. one expression per line. You can assign expressions to variables, which will be remembered.
+You can also save a link to the calculation.
+<br>
+Calculations on numbers are done modulo the grouporder, Calculations on points are done in the <a href="https://en.bitcoin.it/wiki/Secp256k1">secp256k1</a> curve.
+<br>
+<br>
+Predefined constants:
+<ul>
+<li><em>G</em> - the generator.
+<li><em>n</em> - the group order. 
+<li><em>p</em> - the curve prime order.
+</ul>
+
+functions:
+<ul>
+<li><em>sqrt(value, flag)</em> - the square root, a number and a flag 0 or 1
+<li><em>cubert(value, flag)</em> - the cube root, takes two params, a number and a flag 0, 1 or 2
+<li><em>coord(value)</em> - force a value to be a coordinate, in the galois field of order <em>p</em>
+<li><em>scalar(value)</em> - force a value to be a coordinate, in the galois field of order <em>n</em>
+<li><em>fromx(xcoord, flag)</em> - 'decompress' a point from a x coord and a flag{0,1}.
+<li><em>fromy(ycoord, flag)</em> - 'decompress' a point from a y coord and a flag{0,1,2}.
+<li><em>generate(point, count, type)</em> - generate a sequence of curve points, type must be "inc" ( increment point ) or "dbl" (double point)
+<li><em>(x,y)</em> - a curve point.
+<li><em>1234</em> - a scalar value.
+<li><em>0xabcd</em> - a hexadecimal scalar value.
+</ul>
+operators:
+<ul>
+<li><em>+</em> - addition: Point+Point, Scalar+Scalar
+<li><em>-</em> - subtraction: Point-Point, Scalar-Scalar
+<li><em>*</em> - multiplication: Point*Scalar, Scalar*Point, Scalar*Scalar
+<li><em>/</em> - division: Point/Scalar, Scalar/Scalar
+<li><em>^</em> - exponentiation: Scalar^Scalar
+</ul>
+
+
+<p>
+<h2>Free form expressions.</h2>
+<table id=freeform>
+    <tr>
+        <td valign=top>
+            <button onclick='do_freeform()'>calculate</button><br>
+            <button onclick='load_freeform()'>Load example</button><br>
+            <a id=href href=#>link this calculation</a><br>
+        </td>
+        <td><textarea rows=10 cols=80 id='expr'></textarea></td>
+    </tr>
+</table>
+<table id=output>
+</table>
+
+
+
+</body>
+</html>
+

@@ -1,0 +1,200 @@
+<html>
+<head>
+<title>How bitcoin transactions are structured</title>
+    <style>
+    .w50 { width:100px; display: inline-block; }
+    </style>
+<meta charset=utf-8 />
+<meta http-equiv=“Pragma” content=”no-cache”>
+<meta http-equiv=“Expires” content=”-1″>
+<meta http-equiv=“CACHE-CONTROL” content=”NO-CACHE”>
+
+<meta name="keywords" content="bitcoin,example">
+<meta name="author" content="Willem Hengeveld, itsme@xs4all.nl">
+<meta name="description" content="How bitcoin transactions are structured.">
+
+<script src="bignum.js"></script>
+<script src="primes.js"></script>
+<script src="gfp.js"></script>
+<script src="ec.js"></script>
+<script src="ecdsa.js"></script>
+<script src="utils.js"></script>
+<script src="bitcoinio.js"></script>
+<script src="transaction.js"></script>
+<script src="jsutils.js"></script>
+<script language=javascript>
+'use strict';
+function setvalue(base, id, value)
+{
+    var av = base.querySelector("#"+id); 
+    av.value = value;
+    av.innerHTML = value;
+}
+function getvalue(base, id)
+{
+    var av = base.querySelector("#"+id); 
+    return av.value;
+}
+
+function start()
+{
+    var tab = document.getElementById("transaction");
+    //setvalue(tab, "txnid", "19d66411a5aa716a04b37197c11c93c9446a54694a2d2302093d8b0a93ed5d83");
+    setvalue(tab, "txnid", "7d4036dbc43e3b785cabb22413b67ee6c8a7375ec316c226c29eb10915647988");
+}
+
+function loadtxns()
+{
+    var tab = document.getElementById("transaction");
+    
+    for (var txnid of getvalue(tab, "txnid").split(" ")) {
+        fetch_and_loadtxn(txnid);
+    }
+}
+function fetch_and_loadtxn(txnid)
+{
+    // problem with bitcoin.com: it is hours behind.
+    fetch("https://api.blockchair.com/bitcoin/raw/transaction/"+txnid).then(r => r.json()).then(r => {
+        Object.entries(r.data).forEach( ([k,v])=> { hexdumptxn(v.raw_transaction) });
+    });
+}
+
+function annotatetxns()
+{
+    var tab = document.getElementById("transaction");
+    
+    for (var txnid of getvalue(tab, "txnid").split(" ")) {
+        fetch_and_annotatetxn(txnid);
+    }
+}
+function fetch_and_annotatetxn(txnid)
+{
+    // problem with bitcoin.com: it is hours behind.
+    fetch("https://api.blockchair.com/bitcoin/raw/transaction/"+txnid).then(r => r.json()).then(r => {
+        Object.entries(r.data).forEach( ([k,v])=> { annotatetxn(v.raw_transaction) });
+    });
+}
+
+
+function makerow(line)
+{
+    var tr = el('tr');
+    for (var e of line)
+        tr.append(el('td', el('code', e)));
+
+    return tr;
+}
+function maketxnid(txnhash)
+{
+    var id = "";
+    for (var i=0 ; i<64 ; i+=2)
+        id += txnhash.slice(62-i, 64-i);
+    return id;
+}
+function makeinputrow(line)
+{
+    var tr = el('tr');
+    tr.append(el('td', el('code', "\t")));
+    var hexline = line[1];
+    var txnid = maketxnid(hexline.slice(0,64));
+
+    var txncode = el('code', hexline.slice(0,64));
+    txncode.addEventListener('click', () => { fetch_and_loadtxn(txnid); });
+
+    var txnrest = el('code', hexline.slice(64));
+
+    tr.append(el('td', txncode, txnrest));
+
+    return tr;
+}
+
+function hexdumptxn(hex)
+{
+    var r = new BitcoinReader(hextobytes(hex));
+    var t = new Transaction(r);
+    var tab = document.getElementById("hexdump");
+    tab.append(el('tr', el('td', el('hr'), {colspan:2})));
+    var isin = false;
+    for (var line of t.hexdump()) {
+        if (line.find(a=>a.includes("nr inputs")))
+            isin = true;
+        else if (line.find(a=>a.includes("nr outputs")))
+            isin = false;
+        if (isin && line[0]=="\t")
+            tab.append(makeinputrow(line));
+        else
+            tab.append(makerow(line));
+    }
+}
+function insertAfter(newNode, existingNode) {
+    existingNode.parentNode.insertBefore(newNode, existingNode.nextSibling);
+    existingNode.collapsed = false;
+}
+function removeNext(node) {
+    node.parentNode.removeChild(node.nextSibling);
+    node.collapsed = true;
+}
+function makeannotated(children)
+{
+    var dl = el('dl');
+    for (var ch of children) {
+        var dt = el('dt', el('em', ch.tagName), ' ', el('code', ch.textContent));
+        dt.collapsed = true;
+        if (ch.children.length) {
+            dt.subchildren = ch.children;
+            dt.addEventListener('click', (ev) => { 
+                var node = ev.target;
+                while (node && node.tagName != 'DT')
+                    node = node.parentNode;
+                console.log("ev.t.c", ev, node, node.collapsed);
+                if (node.collapsed)
+                    insertAfter(el('dd', makeannotated(node.subchildren)), node);
+                else
+                    removeNext(node);
+            });
+        }
+
+        dl.append(dt);
+    }
+
+    return dl;
+}
+function annotatetxn(hex)
+{
+    var r = new BitcoinReader(hextobytes(hex));
+    var t = new Transaction(r);
+    var tab = document.getElementById("hexdump");
+    tab.append(el('tr', el('td', el('hr'), {colspan:2})));
+
+    var parser = new DOMParser();
+    var xml = parser.parseFromString(t.annotate(), "text/xml");
+    tab.append(el('tr', el('td', makeannotated(xml.firstChild.children), {colspan:2})));
+}
+
+</script>
+    </head>
+    <body onLoad="start()">
+Menu:
+  <a href="ecdsacrack.html">crack demo</a> 
+  <a href="calculator.html">curve calculator</a> 
+  <a href="curve.html">curve demo</a> 
+  <a href="transaction.html">bitcoin transaction</a> 
+  <a href="unittest.html">unittest</a><br>
+Author: Willem Hengeveld, <a href="mailto:itsme@xs4all.nl">itsme@xs4all.nl</a>,
+Source: <a href="https://github.com/nlitsme/bitcoinexplainer">on github</a>.
+<p>
+This demonstrates how bitcoin transactions are structured.
+You can click on the input txn to follow the chain to the corresponding output.
+
+<table id=transaction>
+    <tr>
+    <td>txn: <input size=64 id='txnid'></td>
+    <td><button onclick='loadtxns(this)'>Hexdump</button>
+    <td><button onclick='annotatetxns(this)'>Annotate</button>
+    </tr>
+</table>
+<table id=hexdump>
+</table>
+    </body>
+</html>
+
